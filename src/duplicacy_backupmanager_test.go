@@ -247,7 +247,7 @@ func TestBackupManager(t *testing.T) {
 	time.Sleep(time.Duration(delay) * time.Second)
 	SetDuplicacyPreferencePath(testDir + "/repository2/.duplicacy")
 	backupManager.Restore(testDir+"/repository2", threads /*inPlace=*/, false /*quickMode=*/, false, threads /*overwrite=*/, true,
-		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil)
+		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil /*allowFailures=*/, false)
 
 	for _, f := range []string{"file1", "file2", "dir1/file3"} {
 		if _, err := os.Stat(testDir + "/repository2/" + f); os.IsNotExist(err) {
@@ -271,7 +271,7 @@ func TestBackupManager(t *testing.T) {
 	time.Sleep(time.Duration(delay) * time.Second)
 	SetDuplicacyPreferencePath(testDir + "/repository2/.duplicacy")
 	backupManager.Restore(testDir+"/repository2", 2 /*inPlace=*/, true /*quickMode=*/, true, threads /*overwrite=*/, true,
-		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil)
+		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil /*allowFailures=*/, false)
 
 	for _, f := range []string{"file1", "file2", "dir1/file3"} {
 		hash1 := getFileHash(testDir + "/repository1/" + f)
@@ -299,7 +299,7 @@ func TestBackupManager(t *testing.T) {
 
 	SetDuplicacyPreferencePath(testDir + "/repository2/.duplicacy")
 	backupManager.Restore(testDir+"/repository2", 3 /*inPlace=*/, true /*quickMode=*/, false, threads /*overwrite=*/, true,
-		/*deleteMode=*/ true /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil)
+		/*deleteMode=*/ true /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, nil /*allowFailures=*/, false)
 
 	for _, f := range []string{"file1", "file2", "dir1/file3"} {
 		hash1 := getFileHash(testDir + "/repository1/" + f)
@@ -326,7 +326,7 @@ func TestBackupManager(t *testing.T) {
 	os.Remove(testDir + "/repository1/dir1/file3")
 	SetDuplicacyPreferencePath(testDir + "/repository1/.duplicacy")
 	backupManager.Restore(testDir+"/repository1", 3 /*inPlace=*/, true /*quickMode=*/, false, threads /*overwrite=*/, true,
-		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, []string{"+file2", "+dir1/file3", "-*"})
+		/*deleteMode=*/ false /*setowner=*/, false /*showStatistics=*/, false /*patterns=*/, []string{"+file2", "+dir1/file3", "-*"} /*allowFailures=*/, false)
 
 	for _, f := range []string{"file1", "file2", "dir1/file3"} {
 		hash1 := getFileHash(testDir + "/repository1/" + f)
@@ -341,7 +341,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 3 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1, 2, 3} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
 	backupManager.SnapshotManager.PruneSnapshots("host1", "host1" /*revisions*/, []int{1} /*tags*/, nil /*retentions*/, nil,
 		/*exhaustive*/ false /*exclusive=*/, false /*ignoredIDs*/, nil /*dryRun*/, false /*deleteOnly*/, false /*collectOnly*/, false, 1)
 	numberOfSnapshots = backupManager.SnapshotManager.ListSnapshots( /*snapshotID*/ "host1" /*revisionsToList*/, nil /*tag*/, "" /*showFiles*/, false /*showChunks*/, false)
@@ -349,7 +349,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 2 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{2, 3} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
 	backupManager.Backup(testDir+"/repository1" /*quickMode=*/, false, threads, "fourth", false, false, 0, false)
 	backupManager.SnapshotManager.PruneSnapshots("host1", "host1" /*revisions*/, nil /*tags*/, nil /*retentions*/, nil,
 		/*exhaustive*/ false /*exclusive=*/, true /*ignoredIDs*/, nil /*dryRun*/, false /*deleteOnly*/, false /*collectOnly*/, false, 1)
@@ -358,7 +358,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 3 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{2, 3, 4} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
 
 	/*buf := make([]byte, 1<<16)
 	  runtime.Stack(buf, true)

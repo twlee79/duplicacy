@@ -741,7 +741,7 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 // the same as 'top'.  'quickMode' will bypass files with unchanged sizes and timestamps.  'deleteMode' will
 // remove local files that don't exist in the snapshot. 'patterns' is used to include/exclude certain files.
 func (manager *BackupManager) Restore(top string, revision int, inPlace bool, quickMode bool, threads int, overwrite bool,
-	deleteMode bool, setOwner bool, showStatistics bool, patterns []string) bool {
+	deleteMode bool, setOwner bool, showStatistics bool, patterns []string, allowFailures bool) bool {
 
 	startTime := time.Now().Unix()
 
@@ -892,7 +892,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 	// Sort entries by their starting chunks in order to linearize the access to the chunk chain.
 	sort.Sort(ByChunk(fileEntries))
 
-	chunkDownloader := CreateChunkDownloader(manager.config, manager.storage, nil, showStatistics, threads)
+	chunkDownloader := CreateChunkDownloader(manager.config, manager.storage, nil, showStatistics, threads, allowFailures)
 	chunkDownloader.AddFiles(remoteSnapshot, fileEntries)
 
 	chunkMaker := CreateChunkMaker(manager.config, true)
@@ -1705,7 +1705,7 @@ func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapsho
 	LOG_DEBUG("SNAPSHOT_COPY", "Chunks to copy = %d, to skip = %d, total = %d", chunksToCopy, chunksToSkip, chunksToCopy+chunksToSkip)
 	LOG_DEBUG("SNAPSHOT_COPY", "Total chunks in source snapshot revisions = %d\n", len(chunks))
 
-	chunkDownloader := CreateChunkDownloader(manager.config, manager.storage, nil, false, threads)
+	chunkDownloader := CreateChunkDownloader(manager.config, manager.storage, nil, false, threads, false)
 
 	chunkUploader := CreateChunkUploader(otherManager.config, otherManager.storage, nil, threads,
 		func(chunk *Chunk, chunkIndex int, skipped bool, chunkSize int, uploadSize int) {
