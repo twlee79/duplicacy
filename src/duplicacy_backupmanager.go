@@ -809,8 +809,19 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 	fileEntries := make([]*Entry, 0, len(remoteSnapshot.Files)/2)
 
 	var totalFileSize int64
-	var failedFileSize int64
 	var downloadedFileSize int64
+	var failedFileSize int64
+	var skippedFileSize int64
+	
+	var downloadedFiles []*Entry
+	var skippedFiles []*Entry
+
+	// for storing failed files and reason for failure
+	type FailedEntry struct {
+		entry      *Entry
+		failReason string
+	}
+	var failedFiles []*FailedEntry
 
 	i := 0
 	for _, entry := range remoteSnapshot.Files {
@@ -829,6 +840,8 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 					i++
 					if quickMode && local.IsSameAs(entry) {
 						LOG_TRACE("RESTORE_SKIP", "File %s unchanged (by size and timestamp)", local.Path)
+						skippedFileSize += entry.Size
+						skippedFiles = append(skippedFiles, entry)
 						skipped = true
 					}
 				}
@@ -901,14 +914,6 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 
 	startDownloadingTime := time.Now().Unix()
 
-	var downloadedFiles []*Entry
-
-	type FailedEntry struct {
-		entry      *Entry
-		failReason string
-	}
-	var failedFiles []*FailedEntry
-
 	// Now download files one by one
 	for _, file := range fileEntries {
 
@@ -918,12 +923,16 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			if quickMode {
 				if file.IsSameAsFileInfo(stat) {
 					LOG_TRACE("RESTORE_SKIP", "File %s unchanged (by size and timestamp)", file.Path)
+					skippedFileSize += file.Size
+					skippedFiles = append(skippedFiles, file)
 					continue
 				}
 			}
 
 			if file.Size == 0 && file.IsSameAsFileInfo(stat) {
 				LOG_TRACE("RESTORE_SKIP", "File %s unchanged (size 0)", file.Path)
+				skippedFileSize += file.Size
+				skippedFiles = append(skippedFiles, file)
 				continue
 			}
 		} else {
@@ -946,6 +955,8 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			file.RestoreMetadata(fullPath, nil, setOwner)
 			if !showStatistics {
 				LOG_INFO("DOWNLOAD_DONE", "Downloaded %s (0)", file.Path)
+				downloadedFileSize += file.Size
+				downloadedFiles = append(downloadedFiles, file)
 			}
 
 			continue
@@ -954,14 +965,22 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		downloaded, err := manager.RestoreFile(chunkDownloader, chunkMaker, file, top, inPlace, overwrite, showStatistics,
 			totalFileSize, downloadedFileSize, startDownloadingTime, allowFailures)
 		if err != nil {
+			// RestoreFile produced an error
 			failedFileSize += file.Size
 			failedFiles = append(failedFiles, &FailedEntry{file, err.Error()})
-		} else {
-			if downloaded {
-				downloadedFileSize += file.Size
-				downloadedFiles = append(downloadedFiles, file)
-			}
+			continue
+		}
+
+		// No error
+		if downloaded {
+			// No error, file was restored
+			downloadedFileSize += file.Size
+			downloadedFiles = append(downloadedFiles, file)
 			file.RestoreMetadata(fullPath, nil, setOwner)
+		} else {
+			// No error, file was skipped
+			skippedFileSize += file.Size
+			skippedFiles = append(skippedFiles, file)
 		}
 	}
 
@@ -986,6 +1005,9 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		for _, file := range downloadedFiles {
 			LOG_INFO("DOWNLOAD_DONE", "Downloaded %s (%d)", file.Path, file.Size)
 		}
+		for _, file := range skippedFiles {
+			LOG_INFO("DOWNLOAD_SKIP", "Skipped %s (%d)", file.Path, file.Size)
+		}
 	}
 
 	if len(failedFiles) > 0 {
@@ -1000,6 +1022,8 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		LOG_INFO("RESTORE_STATS", "Files: %d total, %s bytes", len(fileEntries), PrettySize(totalFileSize))
 		LOG_INFO("RESTORE_STATS", "Downloaded %d file, %s bytes, %d chunks",
 			len(downloadedFiles), PrettySize(downloadedFileSize), chunkDownloader.numberOfDownloadedChunks)
+		LOG_INFO("RESTORE_STATS", "Skipped %d file, %s bytes",
+			len(skippedFiles), PrettySize(skippedFileSize))
 		LOG_INFO("RESTORE_STATS", "Failed %d file, %s bytes",
 			len(failedFiles), PrettySize(failedFileSize))
 	}
@@ -1176,6 +1200,9 @@ func (manager *BackupManager) UploadSnapshot(chunkMaker *ChunkMaker, uploader *C
 // Restore downloads a file from the storage.  If 'inPlace' is false, the download file is saved first to a temporary
 // file under the .duplicacy directory and then replaces the existing one.  Otherwise, the existing file will be
 // overwritten directly.
+// Return: true, nil:    Restored file; 
+//         false, nil:   Skipped file; 
+//         false, error: Failure to restore file (only if allowFailures == true)
 func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chunkMaker *ChunkMaker, entry *Entry, top string, inPlace bool, overwrite bool,
 	showStatistics bool, totalFileSize int64, downloadedFileSize int64, startTime int64, allowFailures bool) (bool, error) {
 
@@ -1261,7 +1288,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			LOG_TRACE("DOWNLOAD_OPEN", "Can't open the existing file: %v", err)
 		}
 	} else {
-		// File already exist. Read file and hash entire contents. If fileHash equals entry.Hash, skip file.
+		// File already exists. Read file and hash entire contents. If fileHash == entry.Hash, skip file.
 		// This is done before additional processing so that any identical files can be skipped regardless of the
 		// -overwrite option
 		fileHasher := manager.config.NewFileHasher()
