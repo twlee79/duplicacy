@@ -1514,7 +1514,7 @@ func main() {
 				},
 				cli.BoolFlag{
 					Name:  "persist",
-					Usage: "continue processing despite chunk errors, reporting any affected (corrupted) files",
+					Usage: "continue processing despite chunk errors or existing files (without -overwrite), reporting any affected files",
 				},
 			},
 			Usage:     "Restore the repository to a previously saved snapshot",

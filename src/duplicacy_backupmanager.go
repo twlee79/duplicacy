@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -808,6 +809,7 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 	fileEntries := make([]*Entry, 0, len(remoteSnapshot.Files)/2)
 
 	var totalFileSize int64
+	var failedFileSize int64
 	var downloadedFileSize int64
 
 	i := 0
@@ -900,6 +902,13 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 	startDownloadingTime := time.Now().Unix()
 
 	var downloadedFiles []*Entry
+
+	type FailedEntry struct {
+		entry      *Entry
+		failReason string
+	}
+	var failedFiles []*FailedEntry
+
 	// Now download files one by one
 	for _, file := range fileEntries {
 
@@ -942,12 +951,18 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 			continue
 		}
 
-		if manager.RestoreFile(chunkDownloader, chunkMaker, file, top, inPlace, overwrite, showStatistics,
-			totalFileSize, downloadedFileSize, startDownloadingTime) {
-			downloadedFileSize += file.Size
-			downloadedFiles = append(downloadedFiles, file)
+		downloaded, err := manager.RestoreFile(chunkDownloader, chunkMaker, file, top, inPlace, overwrite, showStatistics,
+			totalFileSize, downloadedFileSize, startDownloadingTime, allowFailures)
+		if err != nil {
+			failedFileSize += file.Size
+			failedFiles = append(failedFiles, &FailedEntry{file, err.Error()})
+		} else {
+			if downloaded {
+				downloadedFileSize += file.Size
+				downloadedFiles = append(downloadedFiles, file)
+			}
+			file.RestoreMetadata(fullPath, nil, setOwner)
 		}
-		file.RestoreMetadata(fullPath, nil, setOwner)
 	}
 
 	if deleteMode && len(patterns) == 0 {
@@ -973,11 +988,23 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 		}
 	}
 
+	if len(failedFiles) > 0 {
+		for _, failed := range failedFiles {
+			file := failed.entry
+			LOG_WARN("RESTORE_STATS", "Restore failed %s (%d): %s", file.Path, file.Size, failed.failReason)
+		}
+	}
+
 	LOG_INFO("RESTORE_END", "Restored %s to revision %d", top, revision)
 	if showStatistics {
 		LOG_INFO("RESTORE_STATS", "Files: %d total, %s bytes", len(fileEntries), PrettySize(totalFileSize))
 		LOG_INFO("RESTORE_STATS", "Downloaded %d file, %s bytes, %d chunks",
 			len(downloadedFiles), PrettySize(downloadedFileSize), chunkDownloader.numberOfDownloadedChunks)
+		LOG_INFO("RESTORE_STATS", "Failed %d file, %s bytes",
+			len(failedFiles), PrettySize(failedFileSize))
+	}
+	if len(failedFiles) > 0 {
+		LOG_WARN("RESTORE_STATS", "Some files could not be restored")
 	}
 
 	runningTime := time.Now().Unix() - startTime
@@ -1150,7 +1177,7 @@ func (manager *BackupManager) UploadSnapshot(chunkMaker *ChunkMaker, uploader *C
 // file under the .duplicacy directory and then replaces the existing one.  Otherwise, the existing file will be
 // overwritten directly.
 func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chunkMaker *ChunkMaker, entry *Entry, top string, inPlace bool, overwrite bool,
-	showStatistics bool, totalFileSize int64, downloadedFileSize int64, startTime int64) bool {
+	showStatistics bool, totalFileSize int64, downloadedFileSize int64, startTime int64, allowFailures bool) (bool, error) {
 
 	LOG_TRACE("DOWNLOAD_START", "Downloading %s", entry.Path)
 
@@ -1160,6 +1187,14 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 	preferencePath := GetDuplicacyPreferencePath()
 	temporaryPath := path.Join(preferencePath, "temporary")
 	fullPath := joinPath(top, entry.Path)
+
+	// Function to call on errors ignored by allowFailures
+	var onFailure LogFunc
+	if allowFailures {
+		onFailure = LOG_WARN
+	} else {
+		onFailure = LOG_ERROR
+	}
 
 	defer func() {
 		if existingFile != nil {
@@ -1195,7 +1230,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				existingFile, err = os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_CREATE", "Failed to create the file %s for in-place writing: %v", fullPath, err)
-					return false
+					return false, nil
 				}
 
 				n := int64(1)
@@ -1207,18 +1242,18 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				_, err = existingFile.Seek(entry.Size-n, 0)
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_CREATE", "Failed to resize the initial file %s for in-place writing: %v", fullPath, err)
-					return false
+					return false, nil
 				}
 				_, err = existingFile.Write([]byte("\x00\x00")[:n])
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_CREATE", "Failed to initialize the sparse file %s for in-place writing: %v", fullPath, err)
-					return false
+					return false, nil
 				}
 				existingFile.Close()
 				existingFile, err = os.Open(fullPath)
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_OPEN", "Can't reopen the initial file just created: %v", err)
-					return false
+					return false, nil
 				}
 				isNewFile = true
 			}
@@ -1226,10 +1261,43 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			LOG_TRACE("DOWNLOAD_OPEN", "Can't open the existing file: %v", err)
 		}
 	} else {
+		// File already exist. Read file and hash entire contents. If fileHash equals entry.Hash, skip file.
+		// This is done before additional processing so that any identical files can be skipped regardless of the
+		// -overwrite option
+		fileHasher := manager.config.NewFileHasher()
+		buffer := make([]byte, 64*1024)
+
+		for {
+			n, err := existingFile.Read(buffer)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				LOG_ERROR("DOWNLOAD_OPEN", "Failed to read existing file: %v", err)
+				return false, nil
+			}
+			if n > 0 {
+				fileHasher.Write(buffer[:n])
+			}
+		}
+
+		fileHash := hex.EncodeToString(fileHasher.Sum(nil))
+
+		if fileHash == entry.Hash && fileHash != "" {
+			LOG_TRACE("DOWNLOAD_SKIP", "File %s unchanged (by hash)", entry.Path)
+			return false, nil
+		}
+
+		// fileHash != entry.Hash, warn/error depending on -overwrite option
 		if !overwrite {
-			LOG_ERROR("DOWNLOAD_OVERWRITE",
-				"File %s already exists.  Please specify the -overwrite option to continue", entry.Path)
-			return false
+			var msg string
+			if allowFailures {
+				msg = "File %s already exists.  Please specify the -overwrite option to overwrite"
+			} else {
+				msg = "File %s already exists.  Please specify the -overwrite option to continue"
+			}
+			onFailure("DOWNLOAD_OVERWRITE", msg, entry.Path) // will exit program here if allowFailures = false
+			return false, errors.New("file exists")
 		}
 	}
 
@@ -1299,7 +1367,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 					}
 					if err != nil {
 						LOG_ERROR("DOWNLOAD_SPLIT", "Failed to read existing file: %v", err)
-						return false
+						return false, nil
 					}
 				}
 				if count > 0 {
@@ -1339,9 +1407,11 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 					return nil, false
 				})
 		}
+
+		// This is an additional check comparing fileHash to entry.Hash above, so this should no longer occur
 		if fileHash == entry.Hash && fileHash != "" {
 			LOG_TRACE("DOWNLOAD_SKIP", "File %s unchanged (by hash)", entry.Path)
-			return false
+			return false, nil
 		}
 	}
 
@@ -1369,7 +1439,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			existingFile, err = os.OpenFile(fullPath, os.O_RDWR, 0)
 			if err != nil {
 				LOG_ERROR("DOWNLOAD_OPEN", "Failed to open the file %s for in-place writing", fullPath)
-				return false
+				return false, nil
 			}
 		}
 
@@ -1401,7 +1471,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			_, err = existingFile.Seek(offset, 0)
 			if err != nil {
 				LOG_ERROR("DOWNLOAD_SEEK", "Failed to set the offset to %d for file %s: %v", offset, fullPath, err)
-				return false
+				return false, nil
 			}
 
 			// Check if the chunk is available in the existing file
@@ -1411,7 +1481,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				_, err := io.CopyN(hasher, existingFile, int64(existingLengths[j]))
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_READ", "Failed to read the existing chunk %s: %v", hash, err)
-					return false
+					return false, nil
 				}
 				if IsDebugging() {
 					LOG_DEBUG("DOWNLOAD_UNCHANGED", "Chunk %s is unchanged", manager.config.GetChunkIDFromHash(hash))
@@ -1421,7 +1491,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				_, err = existingFile.Write(chunk.GetBytes()[start:end])
 				if err != nil {
 					LOG_ERROR("DOWNLOAD_WRITE", "Failed to write to the file: %v", err)
-					return false
+					return false, nil
 				}
 				hasher.Write(chunk.GetBytes()[start:end])
 			}
@@ -1432,15 +1502,15 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 		// Must truncate the file if the new size is smaller
 		if err = existingFile.Truncate(offset); err != nil {
 			LOG_ERROR("DOWNLOAD_TRUNCATE", "Failed to truncate the file at %d: %v", offset, err)
-			return false
+			return false, nil
 		}
 
 		// Verify the download by hash
 		hash := hex.EncodeToString(hasher.Sum(nil))
 		if hash != entry.Hash && hash != "" && entry.Hash != "" && !strings.HasPrefix(entry.Hash, "#") {
-			LOG_ERROR("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s (in-place)",
+			onFailure("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s (in-place)",
 				fullPath, "", entry.Hash)
-			return false
+			return false, errors.New("file corrupt (hash mismatch)")
 		}
 
 	} else {
@@ -1449,7 +1519,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 		newFile, err = os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			LOG_ERROR("DOWNLOAD_OPEN", "Failed to open file for writing: %v", err)
-			return false
+			return false, nil
 		}
 
 		hasher := manager.config.NewFileHasher()
@@ -1502,7 +1572,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			_, err = newFile.Write(data)
 			if err != nil {
 				LOG_ERROR("DOWNLOAD_WRITE", "Failed to write file: %v", err)
-				return false
+				return false, nil
 			}
 
 			hasher.Write(data)
@@ -1511,9 +1581,9 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 
 		hash := hex.EncodeToString(hasher.Sum(nil))
 		if hash != entry.Hash && hash != "" && entry.Hash != "" && !strings.HasPrefix(entry.Hash, "#") {
-			LOG_ERROR("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s",
+			onFailure("DOWNLOAD_HASH", "File %s has a mismatched hash: %s instead of %s",
 				entry.Path, hash, entry.Hash)
-			return false
+			return false, errors.New("file corrupt (hash mismatch)")
 		}
 
 		if existingFile != nil {
@@ -1527,20 +1597,20 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 		err = os.Remove(fullPath)
 		if err != nil && !os.IsNotExist(err) {
 			LOG_ERROR("DOWNLOAD_REMOVE", "Failed to remove the old file: %v", err)
-			return false
+			return false, nil
 		}
 
 		err = os.Rename(temporaryPath, fullPath)
 		if err != nil {
 			LOG_ERROR("DOWNLOAD_RENAME", "Failed to rename the file %s to %s: %v", temporaryPath, fullPath, err)
-			return false
+			return false, nil
 		}
 	}
 
 	if !showStatistics {
 		LOG_INFO("DOWNLOAD_DONE", "Downloaded %s (%d)", entry.Path, entry.Size)
 	}
-	return true
+	return true, nil
 }
 
 // CopySnapshots copies the specified snapshots from one storage to the other.
