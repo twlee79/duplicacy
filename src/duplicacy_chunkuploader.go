@@ -36,6 +36,11 @@ type ChunkUploader struct {
 // CreateChunkUploader creates a chunk uploader.
 func CreateChunkUploader(config *Config, storage Storage, snapshotCache *FileStorage, threads int,
 	completionFunc func(chunk *Chunk, chunkIndex int, skipped bool, chunkSize int, uploadSize int)) *ChunkUploader {
+	
+	if threads<=0 { // prevents situation where threads==0 fails to Start() uploading
+		threads = 1
+	}
+
 	uploader := &ChunkUploader{
 		config:         config,
 		storage:        storage,

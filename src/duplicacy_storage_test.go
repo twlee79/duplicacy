@@ -29,7 +29,8 @@ var testThreads int
 var testFixedChunkSize bool
 var testRSAEncryption bool
 
-func init() {
+func main() {
+	// flag.Parse in init() fails in go1.13: https://github.com/golang/go/issues/31859
 	flag.StringVar(&testStorageName, "storage", "", "the test storage to use")
 	flag.IntVar(&testRateLimit, "limit-rate", 0, "maximum transfer speed in kbytes/sec")
 	flag.BoolVar(&testQuickMode, "quick", false, "quick test")

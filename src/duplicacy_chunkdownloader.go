@@ -55,6 +55,11 @@ type ChunkDownloader struct {
 }
 
 func CreateChunkDownloader(config *Config, storage Storage, snapshotCache *FileStorage, showStatistics bool, threads int, allowFailures bool) *ChunkDownloader {
+
+	if threads<=0 { // prevents situation where threads==0 fails to Start() downloading
+		threads = 1
+	}
+
 	downloader := &ChunkDownloader{
 		config:         config,
 		storage:        storage,
@@ -362,8 +367,9 @@ func (downloader *ChunkDownloader) Download(threadIndex int, task ChunkDownloadT
 	// This lambda function allows different handling of failures depending on allowFailures state
 	onFailure := func(failureFn LogFunc, logID string, format string, v ...interface{}) {
 		if downloader.allowFailures {
-			// Allowing failures: Convert message to warning and complete goroutine
+			// Allowing failures: Convert message to warning, mark chunk isBroken = true and complete goroutine
 			LOG_WARN(logID, format, v...)
+			chunk.isBroken = true
 			downloader.completionChannel <- ChunkDownloadCompletion{chunk: chunk, chunkIndex: task.chunkIndex}
 
 		} else {

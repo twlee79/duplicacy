@@ -1515,12 +1515,14 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 				}
 			} else {
 				chunk := chunkDownloader.WaitForChunk(i)
-				_, err = existingFile.Write(chunk.GetBytes()[start:end])
-				if err != nil {
-					LOG_ERROR("DOWNLOAD_WRITE", "Failed to write to the file: %v", err)
-					return false, nil
+				if !chunk.isBroken { // only write if chunk downloaded correctly
+					_, err = existingFile.Write(chunk.GetBytes()[start:end])
+					if err != nil {
+						LOG_ERROR("DOWNLOAD_WRITE", "Failed to write to the file: %v", err)
+						return false, nil
+					}
+					hasher.Write(chunk.GetBytes()[start:end])
 				}
-				hasher.Write(chunk.GetBytes()[start:end])
 			}
 
 			offset += int64(end - start)
@@ -1585,15 +1587,17 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 			if !hasLocalCopy {
 				chunk := chunkDownloader.WaitForChunk(i)
 				// If the chunk was downloaded from the storage, we may still need a portion of it.
-				start := 0
-				if i == entry.StartChunk {
-					start = entry.StartOffset
+				if !chunk.isBroken { // only get data if chunk downloaded correctly
+					start := 0
+					if i == entry.StartChunk {
+						start = entry.StartOffset
+					}
+					end := chunk.GetLength()
+					if i == entry.EndChunk {
+						end = entry.EndOffset
+					}
+					data = chunk.GetBytes()[start:end]
 				}
-				end := chunk.GetLength()
-				if i == entry.EndChunk {
-					end = entry.EndOffset
-				}
-				data = chunk.GetBytes()[start:end]
 			}
 
 			_, err = newFile.Write(data)
