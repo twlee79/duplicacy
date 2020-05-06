@@ -1003,7 +1003,11 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 			manager.chunkDownloader.AddChunk(chunkHash)
 		}
 		manager.chunkDownloader.WaitForCompletion()
-		LOG_INFO("SNAPSHOT_VERIFY", "All %d chunks have been successfully verified", len(*allChunkHashes))
+		if allowFailures {
+			LOG_INFO("SNAPSHOT_VERIFY", "All %d chunks have been verified, see above for any errors", len(*allChunkHashes))
+		} else {
+			LOG_INFO("SNAPSHOT_VERIFY", "All %d chunks have been successfully verified", len(*allChunkHashes))
+		}
 	}
 	return true
 }

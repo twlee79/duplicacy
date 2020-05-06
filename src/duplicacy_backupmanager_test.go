@@ -609,7 +609,7 @@ func TestBackupManagerPersist(t *testing.T) {
 	chunkToCorrupt1 := "/4d/538e5dfd2b08e782bfeb56d1360fb5d7eb9d8c4b2531cc2fca79efbaec910c"
 		// this should affect file1
 	chunkToCorrupt2 := "/2b/f953a766d0196ce026ae259e76e3c186a0e4bcd3ce10f1571d17f86f0a5497"
-			// this should affect dir1/file3
+		// this should affect dir1/file3
 	
 	for i := 0; i < 2; i++ {
 		if i==0 {
