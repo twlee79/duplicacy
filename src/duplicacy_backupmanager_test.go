@@ -341,7 +341,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 3 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1, 2, 3} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false /*onlySnapshotChunks*/, false)
 	backupManager.SnapshotManager.PruneSnapshots("host1", "host1" /*revisions*/, []int{1} /*tags*/, nil /*retentions*/, nil,
 		/*exhaustive*/ false /*exclusive=*/, false /*ignoredIDs*/, nil /*dryRun*/, false /*deleteOnly*/, false /*collectOnly*/, false, 1)
 	numberOfSnapshots = backupManager.SnapshotManager.ListSnapshots( /*snapshotID*/ "host1" /*revisionsToList*/, nil /*tag*/, "" /*showFiles*/, false /*showChunks*/, false)
@@ -349,7 +349,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 2 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{2, 3} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false /*onlySnapshotChunks*/, false)
 	backupManager.Backup(testDir+"/repository1" /*quickMode=*/, false, threads, "fourth", false, false, 0, false)
 	backupManager.SnapshotManager.PruneSnapshots("host1", "host1" /*revisions*/, nil /*tags*/, nil /*retentions*/, nil,
 		/*exhaustive*/ false /*exclusive=*/, true /*ignoredIDs*/, nil /*dryRun*/, false /*deleteOnly*/, false /*collectOnly*/, false, 1)
@@ -358,7 +358,7 @@ func TestBackupManager(t *testing.T) {
 		t.Errorf("Expected 3 snapshots but got %d", numberOfSnapshots)
 	}
 	backupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{2, 3, 4} /*tag*/, "",
-		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false)
+		/*showStatistics*/ false /*showTabular*/, false /*checkFiles*/, false /*checkChunks*/, false /*searchFossils*/, false /*resurrect*/, false, 1 /*allowFailures*/, false /*onlySnapshotChunks*/, false)
 
 	/*buf := make([]byte, 1<<16)
 	  runtime.Stack(buf, true)
@@ -532,11 +532,11 @@ func TestBackupManagerPersist(t *testing.T) {
 	// check snapshots
 	unencBackupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1} /*tag*/, "",
 		/*showStatistics*/ true /*showTabular*/, false /*checkFiles*/, true /*checkChunks*/, false,
-		/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, false)
+		/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, false /*onlySnapshotChunks*/, false)
 
 	encBackupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1} /*tag*/, "",
 		/*showStatistics*/ true /*showTabular*/, false /*checkFiles*/, true /*checkChunks*/, false,
-		 /*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, false)
+		 /*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, false /*onlySnapshotChunks*/, false)
 		
 	// check functions
 	checkAllUncorrupted := func(cmpRepository string) {
@@ -626,11 +626,11 @@ func TestBackupManagerPersist(t *testing.T) {
 		// this would cause a panic and os.Exit from duplicacy_log if allowFailures == false
 		unencBackupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1} /*tag*/, "",
 			/*showStatistics*/ true /*showTabular*/, false /*checkFiles*/, true /*checkChunks*/, false,
-			/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, true)
+			/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, true /*onlySnapshotChunks*/, false)
 
 		encBackupManager.SnapshotManager.CheckSnapshots( /*snapshotID*/ "host1" /*revisions*/, []int{1} /*tag*/, "",
 			/*showStatistics*/ true /*showTabular*/, false /*checkFiles*/, true /*checkChunks*/, false,
-			/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, true)
+			/*searchFossils*/ false /*resurrect*/, false, 1 /*allowFailures*/, true /*onlySnapshotChunks*/, false)
 
 		
 		// test restore corrupted, inPlace = true, corrupted files will have hash failures

@@ -1646,7 +1646,7 @@ func (manager *BackupManager) RestoreFile(chunkDownloader *ChunkDownloader, chun
 
 // CopySnapshots copies the specified snapshots from one storage to the other.
 func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapshotID string,
-	revisionsToBeCopied []int, threads int) bool {
+	revisionsToBeCopied []int, threads int, onlySnapshotChunks bool) bool {
 
 	if !manager.config.IsCompatiableWith(otherManager.config) {
 		LOG_ERROR("CONFIG_INCOMPATIBLE", "Two storages are not compatible for the copy operation")
@@ -1766,9 +1766,13 @@ func (manager *BackupManager) CopySnapshots(otherManager *BackupManager, snapsho
 			return false
 		}
 
-		for _, chunkHash := range snapshot.ChunkHashes {
-			if _, found := chunks[chunkHash]; !found {
-				chunks[chunkHash] = false  // The chunk is a file chunk
+		if onlySnapshotChunks {
+			LOG_WARN("SNAPSHOT_CHUNK", "Skipping non-snapshot chunks")
+		} else {
+			for _, chunkHash := range snapshot.ChunkHashes {
+				if _, found := chunks[chunkHash]; !found {
+					chunks[chunkHash] = false  // The chunk is a file chunk
+				}
 			}
 		}
 

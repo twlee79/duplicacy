@@ -24,7 +24,7 @@ import (
 
 	"io/ioutil"
 
-	"github.com/gilbertchen/duplicacy/src"
+	duplicacy "github.com/gilbertchen/duplicacy/src"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 )
 
 var ScriptEnabled bool
-var GitCommit = "unofficial"
+var GitCommit = "TWL-persist-copymetadataonly"
 
 func getRepositoryPreference(context *cli.Context, storageName string) (repository string,
 	preference *duplicacy.Preference) {
@@ -936,9 +936,14 @@ func checkSnapshots(context *cli.Context) {
 	searchFossils := context.Bool("fossils")
 	resurrect := context.Bool("resurrect")
 	persist := context.Bool("persist")
+	metadataOnly := context.Bool("metadata-only")
+	if metadataOnly {
+		checkFiles = false
+	}
 
 	backupManager.SetupSnapshotCache(preference.Name)
-	backupManager.SnapshotManager.CheckSnapshots(id, revisions, tag, showStatistics, showTabular, checkFiles, checkChunks, searchFossils, resurrect, threads, persist)
+	backupManager.SnapshotManager.CheckSnapshots(id, revisions, tag, showStatistics, showTabular, checkFiles, checkChunks, 
+		searchFossils, resurrect, threads, persist, metadataOnly)
 
 	runScript(context, preference.Name, "post")
 }
@@ -1226,8 +1231,9 @@ func copySnapshots(context *cli.Context) {
 	if context.String("id") != "" {
 		snapshotID = context.String("id")
 	}
+	metadataOnly := context.Bool("metadata-only")
 
-	sourceManager.CopySnapshots(destinationManager, snapshotID, revisions, threads)
+	sourceManager.CopySnapshots(destinationManager, snapshotID, revisions, threads, metadataOnly)
 	runScript(context, source.Name, "post")
 }
 
@@ -1637,6 +1643,10 @@ func main() {
 					Name:  "persist",
 					Usage: "continue processing despite chunk errors, reporting any affected (corrupted) files",
 				},
+				cli.BoolFlag{
+					Name:  "metadata-only",
+					Usage: "check metadata only (useful if storage is metadata only copy)",
+				},
 			},
 			Usage:     "Check the integrity of snapshots",
 			ArgsUsage: " ",
@@ -1974,6 +1984,10 @@ func main() {
 					Name:     "key",
 					Usage:    "the RSA private key to decrypt file chunks from the source storage",
 					Argument: "<private key>",
+				},
+				cli.BoolFlag{
+					Name:  "metadata-only",
+					Usage: "copy metadata only (useful for redundancy with bit-identical storages); disables -files",
 				},
 			},
 			Usage:     "Copy snapshots between compatible storages",

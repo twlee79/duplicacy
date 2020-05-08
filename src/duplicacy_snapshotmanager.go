@@ -654,7 +654,8 @@ func (manager *SnapshotManager) GetSnapshotChunks(snapshot *Snapshot, keepChunkH
 }
 
 // GetSnapshotChunkHashes has an option to retrieve chunk hashes in addition to chunk ids.
-func (manager *SnapshotManager) GetSnapshotChunkHashes(snapshot *Snapshot, chunkHashes *map[string]bool, chunkIDs map[string]bool) {
+// skipFileChunks will only get metadata chunks, skipping file chunks
+func (manager *SnapshotManager) GetSnapshotChunkHashes(snapshot *Snapshot, chunkHashes *map[string]bool, chunkIDs map[string]bool, skipFileChunks bool) {
 
 	for _, chunkHash := range snapshot.FileSequence {
 		if chunkHashes != nil {
@@ -677,22 +678,25 @@ func (manager *SnapshotManager) GetSnapshotChunkHashes(snapshot *Snapshot, chunk
 		chunkIDs[manager.config.GetChunkIDFromHash(chunkHash)] = true
 	}
 
-	if len(snapshot.ChunkHashes) == 0 {
+	if !skipFileChunks {
+		if len(snapshot.ChunkHashes) == 0 {
 
-		description := manager.DownloadSequence(snapshot.ChunkSequence)
-		err := snapshot.LoadChunks(description)
-		if err != nil {
-			LOG_ERROR("SNAPSHOT_CHUNK", "Failed to load chunks for snapshot %s at revision %d: %v",
-				snapshot.ID, snapshot.Revision, err)
-			return
+			description := manager.DownloadSequence(snapshot.ChunkSequence)
+			err := snapshot.LoadChunks(description)
+			if err != nil {
+				LOG_ERROR("SNAPSHOT_CHUNK", "Failed to load chunks for snapshot %s at revision %d: %v",
+					snapshot.ID, snapshot.Revision, err)
+				return
+			}
 		}
-	}
-
-	for _, chunkHash := range snapshot.ChunkHashes {
-		if chunkHashes != nil {
-			(*chunkHashes)[chunkHash] = true
+	
+		for _, chunkHash := range snapshot.ChunkHashes {
+			if chunkHashes != nil {
+				(*chunkHashes)[chunkHash] = true
+			}
+			chunkIDs[manager.config.GetChunkIDFromHash(chunkHash)] = true
 		}
-		chunkIDs[manager.config.GetChunkIDFromHash(chunkHash)] = true
+	
 	}
 
 	snapshot.ClearChunks()
@@ -802,12 +806,20 @@ func (manager *SnapshotManager) ListSnapshots(snapshotID string, revisionsToList
 
 // ListSnapshots shows the information about a snapshot.
 func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToCheck []int, tag string, showStatistics bool, showTabular bool,
-	checkFiles bool, checkChunks, searchFossils bool, resurrect bool, threads int, allowFailures bool) bool {
+	checkFiles bool, checkChunks, searchFossils bool, resurrect bool, threads int, allowFailures bool, onlySnapshotChunks bool) bool {
+	
+	var checkChunkType string;
+	if onlySnapshotChunks { 
+		checkFiles = false // these parameters are mutually exclusive
+		checkChunkType = "metadata"
+	} else {
+		checkChunkType = "metadata and file"
+	}
 
 	manager.chunkDownloader = CreateChunkDownloader(manager.config, manager.storage, manager.snapshotCache, false, threads, allowFailures)
 
-	LOG_DEBUG("LIST_PARAMETERS", "id: %s, revisions: %v, tag: %s, showStatistics: %t, showTabular: %t, checkFiles: %t, searchFossils: %t, resurrect: %t, allowFailures: %t",
-		snapshotID, revisionsToCheck, tag, showStatistics, showTabular, checkFiles, searchFossils, resurrect, allowFailures)
+	LOG_DEBUG("LIST_PARAMETERS", "id: %s, revisions: %v, tag: %s, showStatistics: %t, showTabular: %t, checkFiles: %t, searchFossils: %t, resurrect: %t, allowFailures: %t, onlySnapshotChunks: %t",
+		snapshotID, revisionsToCheck, tag, showStatistics, showTabular, checkFiles, searchFossils, resurrect, allowFailures, onlySnapshotChunks)
 
 	snapshotMap := make(map[string][]*Snapshot)
 	var err error
@@ -821,7 +833,7 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 	// Store the index of the snapshot that references each chunk; if the chunk is shared by multiple chunks, the index is -1
 	chunkSnapshotMap := make(map[string]int)
 
-	LOG_INFO("SNAPSHOT_CHECK", "Listing all chunks")
+	LOG_INFO("SNAPSHOT_CHECK", "Listing %s chunks", checkChunkType)
 	allChunks, allSizes := manager.ListAllFiles(manager.storage, chunkDir)
 
 	for i, chunk := range allChunks {
@@ -892,6 +904,10 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 		allChunkHashes = &m
 	}
 
+	if onlySnapshotChunks {
+		LOG_WARN("SNAPSHOT_CHECK", "Note: Only checking metadata chunks")
+	}
+
 	for snapshotID = range snapshotMap {
 
 		for _, snapshot := range snapshotMap[snapshotID] {
@@ -903,7 +919,8 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 			}
 
 			chunks := make(map[string]bool)
-			manager.GetSnapshotChunkHashes(snapshot, allChunkHashes, chunks)
+
+			manager.GetSnapshotChunkHashes(snapshot, allChunkHashes, chunks, onlySnapshotChunks)
 
 			missingChunks := 0
 			for chunkID := range chunks {
@@ -974,12 +991,12 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 			}
 
 			if missingChunks > 0 {
-				LOG_WARN("SNAPSHOT_CHECK", "Some chunks referenced by snapshot %s at revision %d are missing",
-					snapshotID, snapshot.Revision)
+				LOG_WARN("SNAPSHOT_CHECK", "Some %s chunks referenced by snapshot %s at revision %d are missing",
+					checkChunkType, snapshotID, snapshot.Revision)
 				totalMissingChunks += missingChunks
 			} else {
-				LOG_INFO("SNAPSHOT_CHECK", "All chunks referenced by snapshot %s at revision %d exist",
-					snapshotID, snapshot.Revision)
+				LOG_INFO("SNAPSHOT_CHECK", "All %s chunks referenced by snapshot %s at revision %d exist",
+					checkChunkType, snapshotID, snapshot.Revision)
 			}
 		}
 
@@ -987,7 +1004,7 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 	}
 
 	if totalMissingChunks > 0 {
-		LOG_ERROR("SNAPSHOT_CHECK", "Some chunks referenced by some snapshots do not exist in the storage")
+		LOG_ERROR("SNAPSHOT_CHECK", "Some %s chunks referenced by some snapshots do not exist in the storage", checkChunkType)
 		return false
 	}
 
