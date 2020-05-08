@@ -746,8 +746,8 @@ func (manager *BackupManager) Restore(top string, revision int, inPlace bool, qu
 
 	startTime := time.Now().Unix()
 
-	LOG_DEBUG("RESTORE_PARAMETERS", "top: %s, revision: %d, in-place: %t, quick: %t, delete: %t",
-		top, revision, inPlace, quickMode, deleteMode)
+	LOG_DEBUG("RESTORE_PARAMETERS", "top: %s, revision: %d, in-place: %t, quick: %t, delete: %t, allowFailures: %t",
+		top, revision, inPlace, quickMode, deleteMode, allowFailures)
 
 	if !strings.HasPrefix(GetDuplicacyPreferencePath(), top) {
 		LOG_INFO("RESTORE_INPLACE", "Forcing in-place mode with a non-default preference path")
